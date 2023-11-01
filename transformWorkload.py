@@ -25,7 +25,7 @@ def parseQuery(query):
 
     return(aliases, joinConds)
 
-def parseJoinCond(join):
+def parseJoinCond(join,aliases):
     joinTbls = join.split()
     joinTbls = [joinTbls[0], joinTbls[-1]]
 
@@ -40,7 +40,7 @@ def parseJoinCond(join):
 
     return(joinTbls, joinAliases, columns)
 
-def getSQL(fileName,joinTbls,columns,join):
+def getSQL(fileName,joinAliases,joinTbls,columns,join):
     SQLTemplate =f"""
     CREATE TABLE if not exists {fileName}_{joinTbls[0]}_{joinTbls[1]}
     as 
@@ -58,9 +58,9 @@ def createTables():
         aliases,joinConds = parseQuery(query)
 
         for join in joinConds:
-            joinTbls, joinAliases, columns = parseJoinCond(join)
+            joinTbls, joinAliases, columns = parseJoinCond(join,aliases)
             #SQLTemplate = SQLTemplate.replace("\n","")
-            table = getSQL(fileName,joinTbls,columns,join)
+            table = getSQL(fileName,joinAliases,joinTbls,columns,join)
             stream = os.popen(f"psql synt -c \"{table}\"")
             stream.read()
 
@@ -70,7 +70,7 @@ def updateWorkload():
         aliases,joinConds = parseQuery(query)
 
         for join in joinConds:
-            joinTbls, joinAliases, columns = parseJoinCond(join)
+            joinTbls, joinAliases, columns = parseJoinCond(join,aliases)
             joinFields = ", ".join(joinTbls)
             joinFieldsList = [i.replace(".","_") for i in joinFields.split()] 
             newJoinCond = join.split(" = ")
