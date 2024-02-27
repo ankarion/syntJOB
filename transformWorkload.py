@@ -3,6 +3,7 @@ import re
 
 WORKLOAD_DIR = "./"
 
+# Generator that iterates through all workload
 def queries():
     for path,directory,files in os.walk(WORKLOAD_DIR):
         for file in files:
@@ -11,9 +12,15 @@ def queries():
                     query = f.read()
                     yield(file,query)
 
+# parse sql query, get:
+# tables aliases and join conditions
 def parseQuery(query):
     aliases = query.split("FROM")[1]
     aliases = aliases.split("WHERE")[0]
+
+    # in case we didn't have where clause
+    aliases = aliases.split(";")[0] 
+
     aliases = re.findall(r".+ AS .+", aliases)
     aliases = list(aliases)
     aliases = [i.strip().replace(",","") for i in aliases]
@@ -41,14 +48,16 @@ def parseJoinCond(join,aliases):
     return(joinTbls, joinAliases, columns)
 
 def getSQL(fileName,joinAliases,joinTbls,columns,join):
+    columns = columns.split(",")
+    distinctOn = columns[0].split("AS")[0]+","+columns[1].split("AS")[0]
+    distinctAliases = columns[0].split("AS")[1]+","+columns[1].split("AS")[1]
     SQLTemplate =f"""
-    CREATE TABLE if not exists {fileName}_{joinTbls[0]}_{joinTbls[1]}
+    CREATE TABLE if not exists f{fileName}_{joinAliases[0]}_{joinAliases[1]}
     as 
-        select {columns} 
+        select distinct {columns[0]}, {columns[1]} 
         from {joinTbls[0]} as {joinAliases[0]},
             {joinTbls[1]} as {joinAliases[1]} 
-    where {join}
-
+        where {join}
     """
     return SQLTemplate
 
@@ -61,7 +70,8 @@ def createTables():
             joinTbls, joinAliases, columns = parseJoinCond(join,aliases)
             #SQLTemplate = SQLTemplate.replace("\n","")
             table = getSQL(fileName,joinAliases,joinTbls,columns,join)
-            stream = os.popen(f"psql synt -c \"{table}\"")
+            print(table)
+            stream = os.popen(f"psql job -c \"{table}\"")
             stream.read()
 
 def updateWorkload():
@@ -72,17 +82,20 @@ def updateWorkload():
         for join in joinConds:
             joinTbls, joinAliases, columns = parseJoinCond(join,aliases)
             joinFields = ", ".join(joinTbls)
-            joinFieldsList = [i.replace(".","_") for i in joinFields.split()] 
+            joinFields = columns.split(",")
+            joinFields = [i.split("AS")[0] for i in joinFields]
+            joinFields = [i.replace(".","_").strip() for i in joinFields] 
+
             newJoinCond = join.split(" = ")
-            newJoinCond[0] += f" = {joinTbls[0]}_{joinTbls[1]}"
-            newJoinCond[0] += f".{joinFieldsList[0]}"
-            newJoinCond[1] += f" = {joinTbls[0]}_{joinTbls[1]}"
-            newJoinCond[1] += f".{joinFieldsList[1]}"
+            newJoinCond[0] += f" = f{fileName}_{joinAliases[0]}_{joinAliases[1]}"
+            newJoinCond[0] += f".{joinFields[0]}"
+            newJoinCond[1] += f" = f{fileName}_{joinAliases[0]}_{joinAliases[1]}"
+            newJoinCond[1] += f".{joinFields[1]}"
             newJoinCond = "\n  AND ".join(newJoinCond)
             newJoinCond = newJoinCond.replace(",","")
 
             query = query.replace(join,newJoinCond)
-            query = query.replace("FROM",f"FROM\n   {joinTbls[0]}_{joinTbls[1]},")
+            query = query.replace("FROM",f"FROM\n   f{fileName}_{joinAliases[0]}_{joinAliases[1]},")
 
         ext = ".sql"
         fileName += "_mod." + ext
