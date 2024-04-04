@@ -5,12 +5,15 @@ WORKLOAD_DIR = "./"
 
 # Generator that iterates through all workload
 def queries():
-    for path,directory,files in os.walk(WORKLOAD_DIR):
-        for file in files:
-            if file.endswith(".sql"):
-                with open(file,"r") as f:
-                    query = f.read()
-                    yield(file,query)
+    size = len(os.listdir(WORKLOAD_DIR))
+    listdir = list(lambda file: file.endswith(".sql"), os.listdir(WORKLOAD_DIR))
+    for i, file in enumerate(listdir):
+        with open(WORKLOAD_DIR + '/' + file, "r") as f:
+            query = f.read()
+            percent = i/size
+            percent = int(percent * 100)
+            print("loadbar: " + '[' + '#'*percent + '-'(100-percent) + ']')
+            yield(file, query)
 
 # parse sql query, get:
 # tables aliases and join conditions
@@ -21,7 +24,7 @@ def parseQuery(query):
     # in case we didn't have where clause
     aliases = aliases.split(";")[0] 
 
-    aliases = re.findall(r".+ AS .+", aliases)
+    aliases = re.findall(r"[^\s,]+AS [^\s,]+", aliases)
     aliases = list(aliases)
     aliases = [i.strip().replace(",","") for i in aliases]
     aliases = [i.split(" AS ")[::-1] for i in aliases]
@@ -34,7 +37,7 @@ def parseQuery(query):
 
 def parseJoinCond(join,aliases):
     joinTbls = join.split()
-    joinTbls = [joinTbls[0], joinTbls[-1]]
+    joinTbls = sorted([joinTbls[0], joinTbls[-1]])
 
     joinFields = ", ".join(joinTbls)
     joinAliases = [i.split(".")[0] for i in joinTbls]
@@ -43,35 +46,57 @@ def parseJoinCond(join,aliases):
     columns = joinFields.split(",")
     columns = [i.strip() for i in columns]
     columns = [i+" AS "+i.replace(".","_") for i in columns]
-    columns = ",".join(columns)
+    columns = ", ".join(columns)
 
     return(joinTbls, joinAliases, columns)
 
-def getSQL(fileName,joinAliases,joinTbls,columns,join):
-    columns = columns.split(",")
-    distinctOn = columns[0].split("AS")[0]+","+columns[1].split("AS")[0]
-    distinctAliases = columns[0].split("AS")[1]+","+columns[1].split("AS")[1]
+def getTableName(joinTbls, joinAliases):
+    return f"{joinTbls[0]}_as_{joinAliases[0]}_{joinTbls[1]}_as_{joinAliases[1]}"
+
+def getSQL(joinTbls, joinAliases, columns, join):
+    table_name = getTableName(joinTbls, joinAliases)
     SQLTemplate =f"""
-    CREATE TABLE if not exists f{fileName}_{joinAliases[0]}_{joinAliases[1]}
-    as 
-        select distinct {columns[0]}, {columns[1]} 
-        from {joinTbls[0]} as {joinAliases[0]},
-            {joinTbls[1]} as {joinAliases[1]} 
-        where {join}
+    DROP TABLE IF EXISTS {table_name};
+    CREATE TABLE {table_name}
+    AS 
+        SELECT DISTINCT {columns} 
+        FROM {joinTbls[0]} AS {joinAliases[0]},
+            {joinTbls[1]} AS {joinAliases[1]} 
+        WHERE {join}
+    """
+    print(SQLTemplate)
+    return SQLTemplate
+
+def getInsert(joinTbls, joinAliases, columns, join):
+    table_name = getTableName(joinTbls, joinAliases)
+    SQLTemplate =f"""
+    INSERT INTO {table_name}
+
+        SELECT DISTINCT {columns} 
+        FROM {joinTbls[0]} AS {joinAliases[0]},
+            {joinTbls[1]} AS {joinAliases[1]} 
+        WHERE {join}
     """
     return SQLTemplate
+
+from collections import defaultdict
+proxyTabels = defaultdict(bool)
 
 def createTables():
     for file, query in queries():
         fileName = file.split(".")[0]
-        aliases,joinConds = parseQuery(query)
-
+        aliases, joinConds = parseQuery(query)
+        print(fileName)
         for join in joinConds:
-            joinTbls, joinAliases, columns = parseJoinCond(join,aliases)
-            #SQLTemplate = SQLTemplate.replace("\n","")
-            table = getSQL(fileName,joinAliases,joinTbls,columns,join)
-            print(table)
-            stream = os.popen(f"psql job -c \"{table}\"")
+            joinTbls, joinAliases, columns = parseJoinCond(join, aliases)
+            tableJoinName = (*joinTbls, *joinAliases)
+            if proxyTabels[tableJoinName]:
+                table = getInsert(joinTbls, joinAliases, columns, join)
+            else:
+                proxyTabels[tableJoinName] = True
+                table = getSQL(joinTbls, joinAliases, columns, join)
+            print(columns)
+            stream = os.popen(f"{RUNNER} {DATABASE} -c \"{table}\"")
             stream.read()
 
 def updateWorkload():
@@ -80,22 +105,21 @@ def updateWorkload():
         aliases,joinConds = parseQuery(query)
 
         for join in joinConds:
-            joinTbls, joinAliases, columns = parseJoinCond(join,aliases)
-            joinFields = ", ".join(joinTbls)
-            joinFields = columns.split(",")
-            joinFields = [i.split("AS")[0] for i in joinFields]
-            joinFields = [i.replace(".","_").strip() for i in joinFields] 
+            joinTbls, joinAliases, columns = parseJoinCond(join, aliases)
+            
+            joinFieldsList = [i.replace('.','_') for i in join.split(' = ')]
 
             newJoinCond = join.split(" = ")
-            newJoinCond[0] += f" = f{fileName}_{joinAliases[0]}_{joinAliases[1]}"
-            newJoinCond[0] += f".{joinFields[0]}"
-            newJoinCond[1] += f" = f{fileName}_{joinAliases[0]}_{joinAliases[1]}"
-            newJoinCond[1] += f".{joinFields[1]}"
+            joinTblName = getTableName(joinTbls, joinAliases)
+            newJoinCond[0] += f" = {joinTblName}"
+            newJoinCond[0] += f".{joinFieldsList[0]}"
+            newJoinCond[1] += f" = {joinTblName}"
+            newJoinCond[1] += f".{joinFieldsList[1]}"
             newJoinCond = "\n  AND ".join(newJoinCond)
             newJoinCond = newJoinCond.replace(",","")
 
             query = query.replace(join,newJoinCond)
-            query = query.replace("FROM",f"FROM\n   f{fileName}_{joinAliases[0]}_{joinAliases[1]},")
+            query = query.replace("FROM",f"FROM\n  {joinTblName},")
 
         ext = ".sql"
         fileName += "_mod." + ext
@@ -105,5 +129,9 @@ def updateWorkload():
             f.write(query)
 
 if __name__=="__main__":
+    # settings
+    DATABASE = 'synt'
+    RUNNER = 'gsql'
+
     createTables()
     updateWorkload()
