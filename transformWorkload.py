@@ -6,13 +6,13 @@ WORKLOAD_DIR = "./"
 # Generator that iterates through all workload
 def queries():
     size = len(os.listdir(WORKLOAD_DIR))
-    listdir = list(lambda file: file.endswith(".sql"), os.listdir(WORKLOAD_DIR))
+    listdir = filter(lambda file: file.endswith(".sql"), os.listdir(WORKLOAD_DIR))
     for i, file in enumerate(listdir):
         with open(WORKLOAD_DIR + '/' + file, "r") as f:
             query = f.read()
             percent = i/size
             percent = int(percent * 100)
-            print("loadbar: " + '[' + '#'*percent + '-'(100-percent) + ']')
+            #print("loadbar: " + '[' + '#'*percent + '-'+(100-percent) + ']')
             yield(file, query)
 
 # parse sql query, get:
@@ -23,14 +23,29 @@ def parseQuery(query):
 
     # in case we didn't have where clause
     aliases = aliases.split(";")[0] 
+    aliases = aliases.strip()
 
-    aliases = re.findall(r"[^\s,]+AS [^\s,]+", aliases)
-    aliases = list(aliases)
-    aliases = [i.strip().replace(",","") for i in aliases]
-    aliases = [i.split(" AS ")[::-1] for i in aliases]
+    # mark aliases
+    # XXX there is a better way to do this
+    aliases = aliases.replace(" AS ", "->")
+    aliases = aliases.replace(" as ", "->")
+
+    # split aliases from each other
+    aliases = aliases.replace(",", " ")
+    aliases = aliases.replace("\n", " ")
+    aliases = aliases.replace("\t", " ")
+    aliases = aliases.split(" ")
+
+    # remove empty lines
+    aliases = filter(lambda el: True if el else False, aliases)
+    aliases = [i.split("->")[::-1] for i in aliases]
     aliases = dict(aliases)
 
-    joinConds = re.findall(r"\w+\.\w+ = \w+\.\w+", query)
+    # parse join conditions
+    joinCondReg = "("+"|".join(aliases.keys()) + "|"
+    joinCondReg += "|".join(aliases.values()) + ")"
+    joinConds = re.findall(f"{joinCondReg}.\w+ = {joinCondReg}.\w+", query)
+    print(joinConds)
     joinConds = list(joinConds)
 
     return(aliases, joinConds)
@@ -85,11 +100,13 @@ proxyTabels = defaultdict(bool)
 def createTables():
     for file, query in queries():
         fileName = file.split(".")[0]
-        aliases, joinConds = parseQuery(query)
         print(fileName)
+        aliases, joinConds = parseQuery(query)
         for join in joinConds:
             joinTbls, joinAliases, columns = parseJoinCond(join, aliases)
             tableJoinName = (*joinTbls, *joinAliases)
+            print(joinTbls)
+            exit()
             if proxyTabels[tableJoinName]:
                 table = getInsert(joinTbls, joinAliases, columns, join)
             else:
