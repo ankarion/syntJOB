@@ -42,11 +42,15 @@ def parseQuery(query):
     aliases = dict(aliases)
 
     # parse join conditions
-    joinCondReg = "("+"|".join(aliases.keys()) + "|"
-    joinCondReg += "|".join(aliases.values()) + ")"
-    joinConds = re.findall(f"{joinCondReg}.\w+ = {joinCondReg}.\w+", query)
-    print(joinConds)
-    joinConds = list(joinConds)
+    joinCondReg = "("
+    joinCondReg += "|".join(aliases.keys()) 
+    joinCondReg += "|"
+    joinCondReg += "|".join(aliases.values())
+    joinCondReg += ")"
+    # joinCondReg = fr"{joinCondReg}\.\w+ = {joinCondReg}\.\w+"
+    joinCondReg = fr"({joinCondReg}\.\w+ = {joinCondReg}\.\w+)"
+    joinConds = re.findall(joinCondReg, query)
+    joinConds = [i[0] for i in joinConds]
 
     return(aliases, joinConds)
 
@@ -70,49 +74,27 @@ def getTableName(joinTbls, joinAliases):
 
 def getSQL(joinTbls, joinAliases, columns, join):
     table_name = getTableName(joinTbls, joinAliases)
+    table_name = "_EQ_".join([i.split("AS")[1].strip() for i in columns.split(",")])
+
     SQLTemplate =f"""
-    DROP TABLE IF EXISTS {table_name};
-    CREATE TABLE {table_name}
+    CREATE TABLE if not EXISTS {table_name}
     AS 
         SELECT DISTINCT {columns} 
         FROM {joinTbls[0]} AS {joinAliases[0]},
             {joinTbls[1]} AS {joinAliases[1]} 
-        WHERE {join}
-    """
-    print(SQLTemplate)
-    return SQLTemplate
-
-def getInsert(joinTbls, joinAliases, columns, join):
-    table_name = getTableName(joinTbls, joinAliases)
-    SQLTemplate =f"""
-    INSERT INTO {table_name}
-
-        SELECT DISTINCT {columns} 
-        FROM {joinTbls[0]} AS {joinAliases[0]},
-            {joinTbls[1]} AS {joinAliases[1]} 
-        WHERE {join}
+        WHERE {join};
     """
     return SQLTemplate
-
-from collections import defaultdict
-proxyTabels = defaultdict(bool)
 
 def createTables():
     for file, query in queries():
         fileName = file.split(".")[0]
-        print(fileName)
         aliases, joinConds = parseQuery(query)
+        # for each join condition - we want to create 
+        # proxy table from SELECT
         for join in joinConds:
             joinTbls, joinAliases, columns = parseJoinCond(join, aliases)
-            tableJoinName = (*joinTbls, *joinAliases)
-            print(joinTbls)
-            exit()
-            if proxyTabels[tableJoinName]:
-                table = getInsert(joinTbls, joinAliases, columns, join)
-            else:
-                proxyTabels[tableJoinName] = True
-                table = getSQL(joinTbls, joinAliases, columns, join)
-            print(columns)
+            table = getSQL(joinTbls, joinAliases, columns, join)
             stream = os.popen(f"{RUNNER} {DATABASE} -c \"{table}\"")
             stream.read()
 
@@ -148,7 +130,7 @@ def updateWorkload():
 if __name__=="__main__":
     # settings
     DATABASE = 'synt'
-    RUNNER = 'gsql'
+    RUNNER = 'psql'
 
     createTables()
     updateWorkload()
