@@ -1,23 +1,10 @@
 import os
 import re
+from workload import queries
+from settings import RUNNER, DATABASE 
 
-WORKLOAD_DIR = "./"
 
-# Generator that iterates through all workload
-def queries():
-    size = len(os.listdir(WORKLOAD_DIR))
-    listdir = filter(lambda file: file.endswith(".sql"), os.listdir(WORKLOAD_DIR))
-    for i, file in enumerate(listdir):
-        with open(WORKLOAD_DIR + '/' + file, "r") as f:
-            query = f.read()
-            percent = i/size
-            percent = int(percent * 100)
-            #print("loadbar: " + '[' + '#'*percent + '-'+(100-percent) + ']')
-            yield(file, query)
-
-# parse sql query, get:
-# tables aliases and join conditions
-def parseQuery(query):
+def getAliases(query):
     aliases = query.split("FROM")[1]
     aliases = aliases.split("WHERE")[0]
 
@@ -40,14 +27,18 @@ def parseQuery(query):
     aliases = filter(lambda el: True if el else False, aliases)
     aliases = [i.split("->")[::-1] for i in aliases]
     aliases = dict(aliases)
+    return(aliases)
 
+# parse sql query, get:
+# tables aliases and join conditions
+def parseQuery(query):
+    aliases = getAliases(query)
     # parse join conditions
     joinCondReg = "("
     joinCondReg += "|".join(aliases.keys()) 
     joinCondReg += "|"
     joinCondReg += "|".join(aliases.values())
     joinCondReg += ")"
-    # joinCondReg = fr"{joinCondReg}\.\w+ = {joinCondReg}\.\w+"
     joinCondReg = fr"({joinCondReg}\.\w+ = {joinCondReg}\.\w+)"
     joinConds = re.findall(joinCondReg, query)
     joinConds = [i[0] for i in joinConds]
@@ -69,34 +60,43 @@ def parseJoinCond(join,aliases):
 
     return(joinTbls, joinAliases, columns)
 
-def getTableName(joinTbls, joinAliases):
-    return f"{joinTbls[0]}_as_{joinAliases[0]}_{joinTbls[1]}_as_{joinAliases[1]}"
 
-def getSQL(joinTbls, joinAliases, columns, join):
-    table_name = getTableName(joinTbls, joinAliases)
-    table_name = "_EQ_".join([i.split("AS")[1].strip() for i in columns.split(",")])
+def getSQL(joinCond):
+    columns = sorted(joinCond.split(" = "))
+    table_name = "_EQ_".join(columns)
+    table_name = table_name.replace(".","__")
+    joinTbls = [i.split(".")[0] for i in columns]
+    columns = ", ".join(columns)
 
     SQLTemplate =f"""
     CREATE TABLE if not EXISTS {table_name}
     AS 
         SELECT DISTINCT {columns} 
-        FROM {joinTbls[0]} AS {joinAliases[0]},
-            {joinTbls[1]} AS {joinAliases[1]} 
-        WHERE {join};
+        FROM {joinTbls[0]},
+            {joinTbls[1]} 
+        WHERE {joinCond};
     """
     return SQLTemplate
 
 def createTables():
+    globalJoinConds = set()
     for file, query in queries():
         fileName = file.split(".")[0]
         aliases, joinConds = parseQuery(query)
-        # for each join condition - we want to create 
-        # proxy table from SELECT
-        for join in joinConds:
-            joinTbls, joinAliases, columns = parseJoinCond(join, aliases)
-            table = getSQL(joinTbls, joinAliases, columns, join)
-            stream = os.popen(f"{RUNNER} {DATABASE} -c \"{table}\"")
-            stream.read()
+        for joinCond in joinConds:
+            condition = sorted(joinCond.split(" = "))
+            condition = [aliases[i.split(".")[0]]+"."+i.split(".")[-1] for i in condition]
+            joinCond = " = ".join(condition)
+            globalJoinConds.add(joinCond)
+    # for each join condition - we want to create 
+    # proxy table from SELECT
+    for join in globalJoinConds:
+        #joinTbls, joinAliases, columns = parseJoinCond(join, aliases)
+        tableDDL = getSQL(join)
+        print(tableDDL)
+        exit()
+        stream = os.popen(f"{RUNNER} {DATABASE} -c \"{table}\"")
+        stream.read()
 
 def updateWorkload():
     for file, query in queries():
@@ -128,9 +128,5 @@ def updateWorkload():
             f.write(query)
 
 if __name__=="__main__":
-    # settings
-    DATABASE = 'synt'
-    RUNNER = 'psql'
-
     createTables()
     updateWorkload()
