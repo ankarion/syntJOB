@@ -3,22 +3,20 @@ In this file we define all transformations
 that can be applied to benchmarks.
 Currently available transformations:
     - Split One to Many relation
+    - Split columns of tables to many small tables
 """
 
 import os
 import re
-from workload import queries, getJoinConds
-from SQLparser import getSQL, execSQL
-
+from workload import queries, getGlobJoinConds
+from SQLparser import getTableDDL, execSQL, SQLQueryToAliases, SQLQueryToJoinConds
 
 def createTables():
-    globalJoinConds = getJoinConds()
+    globalJoinConds = getGlobJoinConds()
     execLogs = []
     # proxy table from SELECT
     for join in globalJoinConds:
-        tableDDL = getSQL(join)
-        print(tableDDL)
-        exit()
+        tableDDL = getTableDDL(join)
         execLogs.append(execSQL(tableDDL))
     return(execLogs)
 
@@ -28,8 +26,7 @@ def updateWorkload():
         
         aliases = SQLQueryToAliases(query)
         joinConds = SQLQueryToJoinConds(query)
-
-        for localJoinCond in joinConds:
+        for joinCond in joinConds:
             # join looks like: 
             # a.id = b.a_id
             #
@@ -47,14 +44,18 @@ def updateWorkload():
             # 3. Replace "=" with that long line
 
             # localJoinCond -> joinCond
-            condition = sorted(localJoinCond.split(" = "))
+            condition = sorted(joinCond.split(" = "))
             condition = [aliases[i.split(".")[0]]+"."+i.split(".")[-1] for i in condition]
             joinCond = " = ".join(condition)
             
-            joinFieldsList = [i.replace('.','_') for i in join.split(' = ')]
+            joinFieldsList = [i.replace('.','_') for i in joinCond.split(' = ')]
 
-            newJoinCond = join.split(" = ")
-            joinTblName = getTableName(joinTbls, joinAliases)
+            newJoinCond = joinCond.split(" = ")
+
+            columns = sorted(joinCond.split(" = "))
+            joinTblName = "_EQ_".join(columns)
+            joinTblName = joinTblName.replace(".","__")
+
             newJoinCond[0] += f" = {joinTblName}"
             newJoinCond[0] += f".{joinFieldsList[0]}"
             newJoinCond[1] += f" = {joinTblName}"

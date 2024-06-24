@@ -20,11 +20,16 @@ def queries(workload=WORKLOAD_DIR):
             #print("loadbar: " + '[' + '#'*percent + '-'+(100-percent) + ']')
             yield(file, query)
 
+def locJoinCondToGlob(joinCond):
+    return null
 """
 Iterate over queries in workload and 
 return a set of join conditions
+
+Note, table aliases in join conditions
+are replaced with original table names
 """
-def getJoinConds(workload=WORKLOAD_DIR):
+def getGlobJoinConds(workload=WORKLOAD_DIR):
     globalJoinConds = set()
     for file, query in queries(workload):
         aliases = SQLQueryToAliases(query)
@@ -35,3 +40,6 @@ def getJoinConds(workload=WORKLOAD_DIR):
             joinCond = " = ".join(condition)
             globalJoinConds.add(joinCond)
     return(globalJoinConds)
+
+def getOIDJoinConds(workload=WORKLOAD_DIR):
+    pass
