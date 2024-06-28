@@ -18,6 +18,9 @@ def getTableOid(tableName):
     SELECT relname, oid FROM pg_class
     WHERE relname={tableName};
     """
+    rawRes = execSQL(SQLTemplate)
+    print(rawRes)
+    exit()
 
 def SQLQueryToAliases(query):
     """
@@ -40,10 +43,13 @@ def SQLQueryToAliases(query):
     aliases = aliases.replace("\n", " ")
     aliases = aliases.replace("\t", " ")
     aliases = aliases.split(" ")
+    aliases = [i.split("->")[::-1] for i in aliases]
 
     # remove empty lines
     aliases = filter(lambda el: True if el else False, aliases)
-    aliases = [i.split("->")[::-1] for i in aliases]
+
+    # find elements in aliases that doesnt have aliases and add oids as their aliases
+    aliases = [[el,getTableOid(el)] if len(el)==1 else el for el in aliases]
     aliases = dict(aliases)
     return(aliases)
 
