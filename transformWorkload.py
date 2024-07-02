@@ -26,6 +26,7 @@ def updateWorkload():
         
         aliases = SQLQueryToAliases(query)
         joinConds = SQLQueryToJoinConds(query)
+        extraTables = set()
         for joinCond in joinConds:
             # join looks like: 
             # a.id = b.a_id
@@ -62,8 +63,11 @@ def updateWorkload():
             newJoinCond[1] += f".{joinFieldsList[1]}"
             newJoinCond = "\n  AND ".join(newJoinCond)
             newJoinCond = newJoinCond.replace(",","")
+            extraTables.add(joinTblName)
 
             query = query.replace(join,newJoinCond)
+
+        for joinTblName in extraTables:
             query = query.replace("FROM",f"FROM\n  {joinTblName},")
 
         ext = ".sql"
