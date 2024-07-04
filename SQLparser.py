@@ -7,20 +7,22 @@ import re, os
 from settings import RUNNER, DATABASE 
 
 def execSQL(SQLcmd):
-    stream = os.popen(f"{RUNNER} {DATABASE} -c \"{SQLcmd}\"")
-    result = stream.read()
-    headings = result.split("\n")[0].split()
-    content = "\n".join(results.split("\n")[1:])
+    with os.popen(f"{RUNNER} {DATABASE} -c \"{SQLcmd}\"") as stream:
+        result = stream.read()
     return result
 
 def getTableOid(tableName):
     SQLTemplate = f"""
     SELECT relname, oid FROM pg_class
-    WHERE relname={tableName};
+    WHERE relname='{tableName}';
     """
     rawRes = execSQL(SQLTemplate)
-    print(rawRes)
-    exit()
+    res = rawRes.split(tableName)[1]
+    res = res.split("|")[1]
+    res = res.split("\n")[0]
+    res = int(res)
+
+    return res
 
 def SQLQueryToAliases(query):
     """
@@ -43,12 +45,17 @@ def SQLQueryToAliases(query):
     aliases = aliases.replace("\n", " ")
     aliases = aliases.replace("\t", " ")
     aliases = aliases.split(" ")
+    # remove empty lines
+    aliases = list(filter(lambda el: True if el else False, aliases))
+
     aliases = [i.split("->")[::-1] for i in aliases]
 
-    # remove empty lines
-    aliases = filter(lambda el: True if el else False, aliases)
-
     # find elements in aliases that doesnt have aliases and add oids as their aliases
+    noAliases = []
+    for el in aliases:
+        if len(el)==1:
+            newAlias = getTableOid(el)
+            noAliases.append(el)
     aliases = [[el,getTableOid(el)] if len(el)==1 else el for el in aliases]
     aliases = dict(aliases)
     return(aliases)
@@ -99,7 +106,8 @@ def getTableDDL(joinCond):
     columns = ", ".join(columns)
 
     SQLTemplate =f"""
-    CREATE TABLE if not EXISTS {table_name}
+    drop table if EXISTS {table_name};
+    CREATE TABLE {table_name}
     AS 
         SELECT DISTINCT {columns} 
         FROM {joinTbls[0]},

@@ -18,6 +18,7 @@ def createTables():
     for join in globalJoinConds:
         tableDDL = getTableDDL(join)
         execLogs.append(execSQL(tableDDL))
+    print(execLogs)
     return(execLogs)
 
 def updateWorkload():
