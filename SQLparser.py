@@ -5,24 +5,7 @@ transform SQL text format to internal representation
 
 import re, os
 from settings import RUNNER, DATABASE 
-
-def execSQL(SQLcmd):
-    with os.popen(f"{RUNNER} {DATABASE} -c \"{SQLcmd}\"") as stream:
-        result = stream.read()
-    return result
-
-def getTableOid(tableName):
-    SQLTemplate = f"""
-    SELECT relname, oid FROM pg_class
-    WHERE relname='{tableName}';
-    """
-    rawRes = execSQL(SQLTemplate)
-    res = rawRes.split(tableName)[1]
-    res = res.split("|")[1]
-    res = res.split("\n")[0]
-    res = int(res)
-
-    return res
+from utils import replaceAliasesInJoinConds, getJoinTblName, getColumns
 
 def SQLQueryToAliases(query):
     """
@@ -45,18 +28,14 @@ def SQLQueryToAliases(query):
     aliases = aliases.replace("\n", " ")
     aliases = aliases.replace("\t", " ")
     aliases = aliases.split(" ")
+
     # remove empty lines
     aliases = list(filter(lambda el: True if el else False, aliases))
-
-    aliases = [i.split("->")[::-1] for i in aliases]
-
-    # find elements in aliases that doesnt have aliases and add oids as their aliases
-    noAliases = []
-    for el in aliases:
-        if len(el)==1:
-            newAlias = getTableOid(el)
-            noAliases.append(el)
-    aliases = [[el,getTableOid(el)] if len(el)==1 else el for el in aliases]
+    for i, al in enumerate(aliases):
+        pair = al.split("->")[::-1]
+        if len(pair) == 1:
+            pair = [pair[0] , pair[0]]
+        aliases[i] = pair
     aliases = dict(aliases)
     return(aliases)
 
@@ -75,38 +54,25 @@ def SQLQueryToJoinConds(query):
     joinCondReg = fr"({joinTblRegExp}\.\w+ = {joinTblRegExp}\.\w+)"
     
     joinConds = re.findall(joinCondReg, query)
-    joinConds = [i[0] for i in joinConds]
+    resConds = []
+    oldJoinConds = []
+    for joinCond in joinConds:
+        oldJoinCond = joinCond[0]
+        joinCond = replaceAliasesInJoinConds(joinCond[0], aliases) 
+        resConds.append(joinCond)
+        oldJoinConds.append(oldJoinCond)
 
-    return(joinConds)
-
-def replaceAliasesInJoinConds(join,aliases):
-    """
-    modify join condition and replace aliases with tableNames
-    """
-    joinTbls = join.split()
-    joinTbls = sorted([joinTbls[0], joinTbls[-1]])
-
-    joinFields = ", ".join(joinTbls)
-    joinAliases = [i.split(".")[0] for i in joinTbls]
-    joinTbls = [aliases[i.split(".")[0]] for i in joinTbls]
-
-    columns = joinFields.split(",")
-    columns = [i.strip() for i in columns]
-    columns = [i+" AS "+i.replace(".","_") for i in columns]
-    columns = ", ".join(columns)
-
-    return(joinTbls, joinAliases, columns)
+    return resConds, oldJoinConds
 
 
 def getTableDDL(joinCond):
-    columns = sorted(joinCond.split(" = "))
-    table_name = "_EQ_".join(columns)
-    table_name = table_name.replace(".","__")
-    joinTbls = [i.split(".")[0] for i in columns]
-    columns = ", ".join(columns)
+    table_name = getJoinTblName(joinCond)
+    joinTbls = re.search(r'(\w+).\w+ = (\w+).\w+', joinCond)
+    joinTbls = [joinTbls.group(1), joinTbls.group(2)]
+    columns = getColumns(joinCond)
 
-    SQLTemplate =f"""
-    drop table if EXISTS {table_name};
+    SQLTemplate = f"""
+    DROP TABLE IF EXISTS {table_name};
     CREATE TABLE {table_name}
     AS 
         SELECT DISTINCT {columns} 
@@ -114,4 +80,5 @@ def getTableDDL(joinCond):
             {joinTbls[1]} 
         WHERE {joinCond};
     """
+
     return SQLTemplate
