@@ -1,0 +1,3 @@
+set params in settings.py
+
+run transformWorkload.py
