@@ -48,7 +48,7 @@ def updateWorkload():
             joinTblName = getJoinTblName(joinCond) 
             joinFieldsList = getFields(joinCond)
             joinCond = replaceGlobalNameInJoinConds(joinCond, aliases)
-            newJoinCond = joinCond.split(" = ")
+            newJoinCond = oldCond.split(" = ")
             
 
             newJoinCond[0] += f" = {joinTblName}"
